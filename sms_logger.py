@@ -28,6 +28,8 @@ mysql_connection_dict = {
     'host': os.getenv("JASMIN_DB_HOST", default="127.0.0.1")
 }
 
+q = {}
+
 @inlineCallbacks
 def gotConnection(conn, username, password):
     print("Connected to broker, authenticating: %s" % username)
