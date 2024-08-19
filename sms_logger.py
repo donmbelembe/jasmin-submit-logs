@@ -56,16 +56,15 @@ import txamqp.spec
 
 from smpp.pdu.pdu_types import DataCoding
 
-import psycopg2
-from psycopg2 import pool
+import mysql.connector
+from mysql.connector import pooling
 
-q = {}
-
-pg_connection_dict = {
+# Connection parameters for MySQL
+mysql_connection_dict = {
     'database': os.getenv("JASMIN_DB_NAME", default="jasmin_web_db"),
     'user': os.getenv("JASMIN_DB_USER", default="jasmin"),
     'password': os.getenv("JASMIN_DB_PASS", default="jasmin"),
-    'port': int(os.getenv("JASMIN_DB_PORT", default="5432")),
+    'port': int(os.getenv("JASMIN_DB_PORT", default="3306")),
     'host': os.getenv("JASMIN_DB_HOST", default="127.0.0.1")
 }
 
@@ -89,16 +88,14 @@ def gotConnection(conn, username, password):
     yield chan.basic_consume(queue='sms_logger_queue', no_ack=False, consumer_tag="sms_logger")
     queue = yield conn.queue("sms_logger")
 
-    # Connection parameters - Fill this info with your PostgreSQL server connection parameters
-    # db = psycopg2.connect(**pg_connection_dict)
-    db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, **pg_connection_dict)
-    db = db_pool.getconn()
+    # Connect to MySQL
+    db_pool = mysql.connector.pooling.MySQLConnectionPool(pool_name="mypool", pool_size=5, **mysql_connection_dict)
+    db = db_pool.get_connection()
     if db:
-        print("Connected to PostgreSQL")
+        print("Connected to MySQL")
     cursor = db.cursor()
 
     # Wait for messages
-    # This can be done through a callback ...
     while True:
         msg = yield queue.get()
         props = msg.content.properties
@@ -115,7 +112,7 @@ def gotConnection(conn, username, password):
             source_connector = props['headers']['source_connector']
             routed_cid = msg.routing_key[10:]
 
-            # Is it a multipart message ?
+            # Is it a multipart message?
             while hasattr(pdu, 'nextPdu'):
                 # Remove UDH from first part
                 if pdu_count == 1:
@@ -160,18 +157,14 @@ def gotConnection(conn, username, password):
 
             if qmsg['source_addr'] is None:
                 qmsg['source_addr'] = ''
-            """
-            # ON DUPLICATE KEY UPDATE trials = trials + 1;
-            # http://stackoverflow.com/a/34639631/4418
 
-            # ON CONFLICT (trials) DO UPDATE submit_log SET trials = submit_log.trials + 1;
-            """
             pdu_status = str(pdu.status).replace("CommandStatus.", "")
             cursor.execute("""INSERT INTO submit_log (msgid, source_addr, rate, pdu_count,
                                                       destination_addr, short_message,
                                                       status, uid, created_at, binary_message,
                                                       routed_cid, source_connector, status_at, trials)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1);
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                    ON DUPLICATE KEY UPDATE trials = trials + 1;
                     """, (
                 props['message-id'],
                 qmsg['source_addr'],
@@ -247,4 +240,5 @@ if __name__ == "__main__":
     d.addErrback(whoops)
 
     reactor.run()
+
 
